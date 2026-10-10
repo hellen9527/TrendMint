@@ -92,6 +92,8 @@ export async function moveCredits(env:Env,userId:number,delta:number,reason:stri
 export const toBool=(s:any)=>s===true||s===1||s==='1';
 export const safeUrl=(s:string)=>{try{const u=new URL(s);return u.protocol==='https:'&& !['localhost','127.0.0.1'].includes(u.hostname)}catch{return false}};
 export const security=(res:Response)=>{
+ // Assets and fetch responses can have immutable headers. Clone before adding security headers.
+ res=new Response(res.body,res);
  res.headers.set('X-Content-Type-Options','nosniff');res.headers.set('Referrer-Policy','strict-origin-when-cross-origin');
  res.headers.set('X-Frame-Options','DENY');res.headers.set('Permissions-Policy','camera=(), microphone=(), geolocation=()');
  res.headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self' https: blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'");

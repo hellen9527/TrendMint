@@ -47,6 +47,19 @@ test('public health does not fake configured providers',async()=>{
  const env=makeEnv(),r=await call(env,'GET','/api/health');assert.equal(r.status,200);
  const obj=await r.json();assert.equal(obj.mode,'live');assert.equal(obj.real_video_configured,false);assert.equal(obj.payments_configured,false);
 });
+test('static assets with immutable headers keep their body and security headers',async()=>{
+ const env=makeEnv(),asset=await fetch('data:text/javascript,window.TrendMintLoaded%3Dtrue%3B');
+ assert.throws(()=>asset.headers.set('X-Test','blocked'),/immutable/i);
+ env.ASSETS.fetch=async()=>asset;
+ const response=await call(env,'GET','/static/app.js');
+ assert.equal(response.status,200);
+ assert.equal(response.headers.get('content-type'),'text/javascript');
+ assert.equal(response.headers.get('x-content-type-options'),'nosniff');
+ assert.equal(response.headers.get('x-frame-options'),'DENY');
+ assert.ok(response.headers.get('content-security-policy').includes("script-src 'self'"));
+ assert.equal(await response.text(),'window.TrendMintLoaded=true;');
+ assert.equal(asset.headers.get('x-frame-options'),null);
+});
 test('public templates are seeded and have no private prompt',async()=>{
  const env=makeEnv();const r=await call(env,'GET','/api/public/templates');const arr=await r.json();assert.equal(arr.length,4);assert.equal(arr[0].prompt,undefined);
 });
