@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+wrangler.generated.json
+.dev.vars
+.dev.vars.*
+*.log
+.test-build/

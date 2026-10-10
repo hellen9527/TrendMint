@@ -1,0 +1,42 @@
+name: TrendMint CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python ${{ matrix.python-version }} / API tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12', '3.13']
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install ffmpeg and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+      - name: Compile Python and run tests
+        run: |
+          python -m compileall -q app
+          python -m pytest -q
+      - name: Check frontend JavaScript
+        run: node --check static/app.js
+      - name: Ensure generated data is not committed
+        run: |
+          ! git ls-files | grep -E '(^|/)(\.env$|__pycache__/|\.pytest_cache/|trendmint\.db|generated/.*\.mp4|data/.*\.jpg)'

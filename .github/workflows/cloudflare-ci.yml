@@ -1,0 +1,26 @@
+name: Cloudflare CI
+on:
+  pull_request:
+    paths:
+      - 'cloudflare/**'
+      - '.github/workflows/cloudflare-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'cloudflare/**'
+      - '.github/workflows/cloudflare-ci.yml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm install --no-audit --no-fund
+        working-directory: cloudflare
+      - run: npm run typecheck && npm test
+        working-directory: cloudflare
+      - run: node --check public/static/app.js
+        working-directory: cloudflare

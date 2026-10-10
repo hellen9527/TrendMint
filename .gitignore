@@ -1,0 +1,11 @@
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+.vscode/
+data/*
+!data/.gitkeep
+generated/*
+!generated/.gitkeep
+*.db
+.DS_Store

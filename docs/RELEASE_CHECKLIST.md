@@ -1,0 +1,25 @@
+# Release readiness checklist
+
+- [x] No private keys in source tree / .env excluded in Git
+- [x] Authenticated API with Argon2, short-lived signed cookie
+- [x] Protected admin API, no public self-promotion
+- [x] CSRF-protected user mutations
+- [x] Private uploads and authorized video downloads
+- [x] Input media validation/resize and pixel count cap
+- [x] Transactional wallet + unique ledger references
+- [x] Signed Stripe webhook handler + idempotent invoice crediting
+- [x] Stripe Billing Portal session endpoint for cancellation
+- [x] Distinct sample vs live trend data and explicit uncertain metrics
+- [x] Real YouTube Data API collector implementation
+- [x] Functional demo MP4 generator + fal API path
+- [ ] Integrations verified using actual owner API keys (cannot be done from offline sandbox)
+- [ ] Stripe Test Mode checkout → fulfillment → subscription renewal → cancel → refund → dispute
+- [ ] fal 5s queue request, provider cost invoice and video content rights confirmed
+- [ ] Move from SQLite to production database + schema migrations
+- [ ] Enforce authenticated email verification, CAPTCHA and distributed rate limiting
+- [ ] Privacy policy, Terms of Service, refunds and data deletion workflow
+- [x] Local upload source deletion and local generated video auto-expiry (default 7 days)
+- [ ] Third-party fal storage retention policy and production R2 object storage
+- [ ] Domain, hosting, TLS, backups, monitoring and alerts
+- [ ] Localization and legitimate marketing channels
+- [ ] Tax/regional payment obligations verified
