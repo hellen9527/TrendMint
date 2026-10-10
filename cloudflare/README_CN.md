@@ -44,10 +44,10 @@ python -c "import secrets; print(secrets.token_urlsafe(48))"
 
 - `https://trendmint.fategenie.com/`：网站首页
 - `https://trendmint.fategenie.com/api/health`：后端是否正常（应返回 `status: ok`）
-- `https://trendmint.fategenie.com/studio`：视频生成界面（未配置 fal.ai 时，生成会受限）
+- `https://trendmint.fategenie.com/studio`：视频生成界面（未配置百炼时，生成会受限）
 - `https://trendmint.fategenie.com/billing`：付费页面（未配置 Stripe 时支付关闭）
 
-**请先确认整个流程健康后再开启真金白银支付。** 目前默认禁止模拟管理员、虚拟充值及真实支付/视频推理，不会产生模型账单。
+**请先确认整个流程健康后再开启支付。** 未配置视频 Key 时生成关闭；配置百炼 Key、业务空间及用户积分后，生成会调用真实 API 并产生模型费用。模拟管理员、虚拟充值默认关闭。
 
 要查看管理员的热点雷达：在网站注册自己的邮箱和密码，再到 Cloudflare → D1 → `trendmint-db` 的 SQL 控制台执行以下更新（换成自己的邮箱）：
 
@@ -57,22 +57,38 @@ UPDATE users SET is_admin = 1 WHERE email = '你的邮箱@example.com';
 
 重新登录后可打开 `/trends`、`/dashboard`。公网注册用户默认**不**拥有管理员权限。
 
-## 4. 开启真实模型（可稍后做）
+## 4. 配置百炼 Wan 3.0 视频（初期推荐流程）
 
-Cloudflare Worker Secrets：
+模型为 `wan3.0-video`，固定生成 **720P / 5 秒 / 单张首帧图片 / 带音频**。模型提交和查询均在 Worker 服务端执行，Key 不进入浏览器、HTML、R2 或 Git 仓库。
 
-- `FAL_KEY`：fal.ai 提供的 API Key
+1. 打开 [百炼 API Key 页面](https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key)，选择 **华北2（北京）**。同地域、同业务空间且允许调用该模型的已有 Key 可以复用；也可创建限制到 `wan3.0-video` 的应用专用 Key。
+2. 在百炼同一业务空间中复制 **业务空间 ID（Workspace ID）**：点击右上角业务空间信息，或在「业务空间管理」中查看。它不是 App ID，也不是阿里云账号 ID。获取方法见[官方说明](https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id)。
+3. 在 [GitHub Secrets](https://github.com/hellen9527/TrendMint/settings/secrets/actions) 新建 Repository secret：
 
-Worker Variables：
+| Name | Value |
+|---|---|
+| `DASHSCOPE_API_KEY` | 直接粘贴百炼 Key（不要发到聊天） |
 
-- `VIDEO_PROVIDER=fal`
-- `FAL_MODEL_ID=fal-ai/kling-video/v2.5-turbo/standard/image-to-video`
-- `VIDEO_COST_ESTIMATE_USD=0.50`（这里只是预计费用，务必核对模型单价）
-- `MAX_DAILY_VIDEO_BUDGET_USD=10`
+4. 同一设置中的 [Variables 标签](https://github.com/hellen9527/TrendMint/settings/variables/actions) 新建 Repository variable：
 
-模型请求走队列，Cloudflare Cron 每 5 分钟轮询。模型结果私有存到 R2，下载时校验归属，超过 7 天清理。模型、数据 URL 兼容性和成功率还需要真实密钥联调。
+| Name | Value |
+|---|---|
+| `DASHSCOPE_WORKSPACE_ID` | 与 Key 对应的业务空间 ID，必填 |
+| `DASHSCOPE_REGION` | 默认 `cn-beijing`，北京用户无需添加 |
+| `VIDEO_COST_ESTIMATE_USD` | 默认 `0.50`，每条视频保守预算估算，需按实际单价/汇率更新 |
+| `MAX_DAILY_VIDEO_BUDGET_USD` | 默认 `5`，每天 UTC 零点重置的预计费用上限 |
 
-**上线前请确认**用户上传照片、供应商模型训练/存储政策及版权和肖像授权；不同模型有不同输入字段。
+5. 在 GitHub Actions → **Cloudflare Deploy → Run workflow** 重新部署。三个 Cloudflare 部署 Secrets 仍需按第 2 节配置。工作流检测到百炼 Key 后启用 `VIDEO_PROVIDER=dashscope`，校验业务空间/地域，并通过标准输入将 Key 写入 `trendmint` Worker 的 **Secret**。未添加 Key 时继续部署网页，但关闭生成。以后修改 Key 或 Variables 后需重新运行工作流；生产配置以 GitHub Actions 为准，手工改 Dashboard 的普通 Variables 会在下一次部署时被覆盖。
+
+Wan 3.0 使用业务空间专用 endpoint：`https://{WorkspaceId}.{Region}.maas.aliyuncs.com/api/v1`，不是 Qwen 文本聊天的 OpenAI 兼容 endpoint。Key、业务空间和 endpoint 必须属于同一地域。已充值的百炼账户仍需确认模型调用权限和余额；聊天会员与 API 余额是不同产品。
+
+任务提交后只查询同一个 task ID，不反复创建。Cron 每 5 分钟轮询，所以生成完成在网站上显示可能额外等待几分钟。成功结果立即私有存到 R2，下载校验登录及任务归属，保存 7 天；失败返还站内积分。预算计入排队任务与失败任务（保守计费），防止并发超额。预算是应用估算，不能代替百炼账单或账户级限额。
+
+验证：`/api/health` 的 `real_video_configured=true` 表示本地配置完整，**不代表已验证 Key 权限**。首次真实验证需要在网站注册测试账号，由管理员在独立 D1 中给予少量测试积分，再上传有权使用的照片生成。注册不赠送积分、Stripe 未启用时不会出现虚拟充值。
+
+已覆盖模拟 API 的提交、状态轮询、R2 保存、私有下载、权限校验和失败退款；真实付费生成仍需配置 Key 后联调。[Wan 3.0 API 官方文档](https://help.aliyun.com/zh/model-studio/wan3-video-generation-api-reference)。
+
+原有 fal 提供商仍可在本地或手工部署中设置 `VIDEO_PROVIDER=fal` 与服务端 `FAL_KEY` 使用；当前 GitHub 自动部署按百炼配置执行。
 
 ## 5. 开启 YouTube 趋势雷达
 
@@ -116,7 +132,7 @@ npm run dev
 |---|---|---|
 | 用户/模板/热门线索 | SQLite | D1 |
 | 上传和视频下载 | 本机文件目录 | R2 私有桶 |
-| AI 后台任务 | Python Worker | Cron + fal Queue |
+| AI 后台任务 | Python Worker | Cron + 百炼 Wan 异步任务（保留 fal 支持） |
 | 模拟视频 | ffmpeg 本地生成 | 关闭（防止误导付费用户） |
 | 支付 | Stripe REST Webhook | Stripe REST + WebCrypto 签名校验 |
 | SEO | FastAPI 返回页面 | Worker 静态资源 + 注入 metadata |
@@ -124,3 +140,4 @@ npm run dev
 **不能将旧 SQLite 文件自动当成 D1 数据库使用**。目前 Cloudflare 版通过 migration 初始化 4 个原创模板。独立运行，生产扩张前要完善数据库并发、退款处理、登录验证码和真实第三方集成测试。
 
 Cloudflare 官方文档：[Worker Assets](https://developers.cloudflare.com/workers/static-assets/)、[D1](https://developers.cloudflare.com/d1/get-started/)、[R2](https://developers.cloudflare.com/r2/get-started/)。
+

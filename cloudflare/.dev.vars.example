@@ -1,0 +1,9 @@
+# Local development only. Replace SESSION_SECRET with a random value of at least 32 characters.
+SESSION_SECRET=
+# Set dashscope only when ready to make paid API calls; never commit .dev.vars.
+VIDEO_PROVIDER=disabled
+DASHSCOPE_API_KEY=
+DASHSCOPE_WORKSPACE_ID=
+DASHSCOPE_REGION=cn-beijing
+VIDEO_COST_ESTIMATE_USD=0.50
+MAX_DAILY_VIDEO_BUDGET_USD=5

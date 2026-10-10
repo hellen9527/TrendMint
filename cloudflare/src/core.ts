@@ -2,6 +2,7 @@
 export type Env = {
  DB: any; MEDIA: any; ASSETS: {fetch(input: Request|string):Promise<Response>};
  SESSION_SECRET?:string; FAL_KEY?:string; FAL_MODEL_ID?:string; VIDEO_PROVIDER?:string;
+ DASHSCOPE_API_KEY?:string; DASHSCOPE_WORKSPACE_ID?:string; DASHSCOPE_REGION?:string;
  VIDEO_COST_ESTIMATE_USD?:string;MAX_DAILY_VIDEO_BUDGET_USD?:string;
  STRIPE_SECRET_KEY?:string;STRIPE_WEBHOOK_SECRET?:string;YOUTUBE_API_KEY?:string;
  WEB_BASE_URL?:string;REGISTRATION_ENABLED?:string;PAYMENTS_ENABLED?:string;
@@ -95,3 +96,4 @@ export const security=(res:Response)=>{
  res.headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; media-src 'self' https: blob:; connect-src 'self'; font-src 'self' data:; object-src 'none'; frame-ancestors 'none'; base-uri 'self'");
  return res;
 };
+

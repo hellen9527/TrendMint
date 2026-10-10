@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node scripts/config.mjs && wrangler dev --config wrangler.generated.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node scripts/prepare-tests.mjs && tsc -p tsconfig.test.json && node --test tests/*.test.mjs",
+    "test": "node scripts/prepare-tests.mjs && tsc -p tsconfig.test.json && node --test tests/*.test.mjs scripts/*.test.mjs",
     "deploy": "node scripts/config.mjs && wrangler deploy --config wrangler.generated.json",
     "migrate:local": "node scripts/config.mjs && wrangler d1 migrations apply trendmint-db --local --config wrangler.generated.json",
     "migrate:remote": "node scripts/config.mjs && wrangler d1 migrations apply trendmint-db --remote --config wrangler.generated.json --yes"
@@ -16,3 +16,4 @@
     "wrangler": "^4.44.0"
   }
 }
+

@@ -8,10 +8,18 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: trendmint-production
+  cancel-in-progress: false
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
+    env:
+      DASHSCOPE_WORKSPACE_ID: ${{ vars.DASHSCOPE_WORKSPACE_ID }}
+      DASHSCOPE_REGION: ${{ vars.DASHSCOPE_REGION || 'cn-beijing' }}
+      VIDEO_COST_ESTIMATE_USD: ${{ vars.VIDEO_COST_ESTIMATE_USD || '0.50' }}
+      MAX_DAILY_VIDEO_BUDGET_USD: ${{ vars.MAX_DAILY_VIDEO_BUDGET_USD || '5' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,12 +35,22 @@ jobs:
             echo 'Missing GitHub Actions secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, TRENDMINT_SESSION_SECRET (min 32 characters).'
             exit 1
           fi
+      - name: Select and validate Wan configuration (without exposing the Key)
+        env:
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+        run: |
+          if [ -n "$DASHSCOPE_API_KEY" ]; then
+            VIDEO_PROVIDER=dashscope node --input-type=module -e "import {buildConfig} from './cloudflare/scripts/config.mjs'; buildConfig();"
+            echo 'VIDEO_PROVIDER=dashscope' >> "$GITHUB_ENV"
+          else
+            echo 'VIDEO_PROVIDER=disabled' >> "$GITHUB_ENV"
+          fi
       - name: Install dependencies
         working-directory: cloudflare
         run: npm install --no-audit --no-fund
       - name: Typecheck and automated tests
         working-directory: cloudflare
-        run: npm run typecheck && npm test && node --test scripts/bootstrap-resources.test.mjs
+        run: npm run typecheck && npm test
       - name: Ensure dedicated D1 and R2 resources
         id: resources
         working-directory: cloudflare
@@ -66,3 +84,14 @@ jobs:
         run: |
           node scripts/config.mjs
           printf '%s' "$TRENDMINT_SESSION_SECRET" | npx wrangler secret put SESSION_SECRET --config wrangler.generated.json
+      - name: Configure Wan API Key as a Worker Secret
+        working-directory: cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+        run: |
+          if [ -n "$DASHSCOPE_API_KEY" ]; then
+            printf '%s' "$DASHSCOPE_API_KEY" | npx wrangler secret put DASHSCOPE_API_KEY --config wrangler.generated.json
+          fi
+

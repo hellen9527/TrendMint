@@ -8,6 +8,8 @@ const {default:worker}=require('../.test-build/worker.js');
 const {moveCredits,stripeHmac}=require('../.test-build/core.js');
 const {verifyStripe,handleStripeEvent}=require('../.test-build/billing.js');
 const {trendScore}=require('../.test-build/trends.js');
+const {pollJobs}=require('../.test-build/jobs.js');
+const {trustedVideoUrl}=require('../.test-build/providers.js');
 function makeEnv(){
  const sqlite=new DatabaseSync(':memory:');sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql',import.meta.url),'utf8'));
  const media=new Map();
@@ -30,7 +32,9 @@ async function call(env,method,path,body,cookie='',csrf=''){
  const headers={...(cookie?{cookie}:{}),...(csrf?{'X-CSRF-Token':csrf}:{}),
   ...(body&&!(body instanceof FormData)?{'Content-Type':'application/json'}:{})};
  const req=new Request('https://trendmint.example.com'+path,{method,headers,body:body?(body instanceof FormData?body:JSON.stringify(body)):undefined});
- return worker.fetch(req,env,{waitUntil(p){p.catch(()=>{})}});
+ const pending=[];
+ const response=await worker.fetch(req,env,{waitUntil(p){pending.push(p)}});
+ await Promise.all(pending);return response;
 }
 async function auth(env){
  const r=await call(env,'POST','/api/auth/register',{email:'example@example.com',password:'long-password-for-test-123'});
@@ -98,3 +102,89 @@ test('SEO response serves canonical and noindex on internal dashboard',async()=>
  assert.equal(resp.status,200);assert.ok(html.includes('noindex,nofollow'));
  const t=await call(env,'GET','/t/pet-popstar');assert.equal(t.status,200);assert.ok((await t.text()).includes('AI Pet Popstar'));
 });
+
+function wanEnv(){return Object.assign(makeEnv(),{VIDEO_PROVIDER:'dashscope',DASHSCOPE_API_KEY:'unit-test-only-key',DASHSCOPE_WORKSPACE_ID:'llm-test-space',DASHSCOPE_REGION:'cn-beijing',VIDEO_COST_ESTIMATE_USD:'0.50',MAX_DAILY_VIDEO_BUDGET_USD:'5'});}
+function photoForm(){
+ const bytes=new Uint8Array(32).fill(255);bytes.set([255,216,255]);
+ const fd=new FormData();fd.set('template_id','1');fd.set('agree_rights','true');fd.set('image',new File([bytes],'photo.jpg',{type:'image/jpeg'}));return fd;
+}
+const wanBase='https://llm-test-space.cn-beijing.maas.aliyuncs.com/api/v1';
+const videoUrl='https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/test/video.mp4';
+const json=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
+test('Wan submits once, polls asynchronously, stores privately and checks download ownership',async t=>{
+ const env=wanEnv(),a=await auth(env);await moveCredits(env,a.user.id,12,'test','wan-fund');
+ let submits=0,status='RUNNING';
+ t.mock.method(globalThis,'fetch',async(url,opts)=>{
+  if(url===wanBase+'/services/aigc/video-generation/video-synthesis'){
+   submits++;assert.equal(opts.headers.Authorization,'Bearer unit-test-only-key');assert.equal(opts.headers['X-DashScope-Async'],'enable');assert.equal(opts.redirect,'error');
+   const body=JSON.parse(opts.body);assert.equal(body.model,'wan3.0-video');assert.deepEqual(body.parameters,{resolution:'720P',ratio:'adaptive',duration:5,audio:true,prompt_extend:true});
+   assert.equal(body.input.media[0].type,'first_frame');
+   const encoded=body.input.media[0].url.split(',')[1];assert.match(encoded,/^[a-zA-Z0-9+/]+=*$/);assert.ok(encoded.endsWith('='));assert.equal(Buffer.from(encoded,'base64').length,32);
+   return json({output:{task_id:'wan-task-1',task_status:'PENDING'}});
+  }
+  if(url===wanBase+'/tasks/wan-task-1')return json({output:{task_id:'wan-task-1',task_status:status,video_url:status==='SUCCEEDED'?videoUrl:undefined}});
+  if(url===videoUrl){assert.equal(opts.headers,undefined);return new Response(new Uint8Array(2048));}
+  throw Error('Unexpected request '+url);
+ });
+ assert.equal((await (await call(env,'GET','/api/health')).json()).real_video_configured,true);
+ const r=await call(env,'POST','/api/jobs',photoForm(),a.cookie,a.csrf);assert.equal(r.status,201);
+ const job=await r.json();assert.equal(job.provider,'dashscope');assert.equal(submits,1);
+ await pollJobs(env);assert.equal(env.sqlite.prepare('SELECT status FROM jobs').get().status,'processing');
+ status='SUCCEEDED';await pollJobs(env);await pollJobs(env);assert.equal(submits,1);
+ const saved=env.sqlite.prepare('SELECT * FROM jobs').get();assert.equal(saved.status,'completed');assert.equal(saved.input_key,job.input_key);
+ assert.equal(await env.MEDIA.get(saved.input_key),null);assert.ok(await env.MEDIA.get(saved.output_key));
+ assert.equal(env.sqlite.prepare('SELECT credits FROM users').get().credits,6);
+ const download=await call(env,'GET',`/api/jobs/${saved.id}/download`,undefined,a.cookie);assert.equal(download.status,200);assert.equal((await download.arrayBuffer()).byteLength,2048);
+ assert.equal((await call(env,'GET',`/api/jobs/${saved.id}/download`)).status,401);
+ env.sqlite.prepare("INSERT INTO users(email,password_hash) VALUES('other@example.com','unused')").run();
+ const {issueSession}=require('../.test-build/core.js');const other=(await issueSession({id:2},env)).map(x=>x.split(';')[0]).join('; ');
+ assert.equal((await call(env,'GET',`/api/jobs/${saved.id}/download`,undefined,other)).status,404);
+});
+test('missing Wan credentials or workspace disables generation before charging',async()=>{
+ for(const missing of ['DASHSCOPE_API_KEY','DASHSCOPE_WORKSPACE_ID']){
+  const env=wanEnv();delete env[missing];const a=await auth(env);
+  assert.equal((await (await call(env,'GET','/api/health')).json()).real_video_configured,false);
+  assert.equal((await call(env,'POST','/api/jobs',photoForm(),a.cookie,a.csrf)).status,503);
+  assert.equal(env.sqlite.prepare('SELECT COUNT(*) AS n FROM credit_entries').get().n,0);
+ }
+});
+test('insufficient credits do not mint a failed-create refund',async()=>{
+ const env=wanEnv(),a=await auth(env);
+ assert.equal((await call(env,'POST','/api/jobs',photoForm(),a.cookie,a.csrf)).status,402);
+ assert.equal(env.sqlite.prepare('SELECT credits FROM users').get().credits,0);
+ assert.equal(env.sqlite.prepare('SELECT COUNT(*) AS n FROM credit_entries').get().n,0);
+});
+test('Wan provider failure refunds credits once and removes input',async t=>{
+ const env=wanEnv(),a=await auth(env);await moveCredits(env,a.user.id,6,'test','wan-fund');
+ t.mock.method(globalThis,'fetch',async(url)=>url.endsWith('video-synthesis')?json({output:{task_id:'wan-fail-1',task_status:'PENDING'}}):json({output:{task_status:'FAILED',code:'DataInspectionFailed',message:env.DASHSCOPE_API_KEY}}));
+ const r=await call(env,'POST','/api/jobs',photoForm(),a.cookie,a.csrf);assert.equal(r.status,201);
+ await pollJobs(env);await pollJobs(env);
+ const job=env.sqlite.prepare('SELECT * FROM jobs').get();assert.equal(job.status,'failed');assert.ok(!job.error.includes(env.DASHSCOPE_API_KEY));assert.equal(await env.MEDIA.get(job.input_key),null);
+ assert.equal(env.sqlite.prepare('SELECT credits FROM users').get().credits,6);
+ assert.equal(env.sqlite.prepare("SELECT COUNT(*) AS n FROM credit_entries WHERE ref LIKE '%:refund'").get().n,1);
+});
+test('Wan rejected submission is sanitized and refunded',async t=>{
+ const env=wanEnv(),a=await auth(env);await moveCredits(env,a.user.id,6,'test','wan-fund');
+ t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify({code:'InvalidApiKey',message:env.DASHSCOPE_API_KEY}),{status:401}));
+ await call(env,'POST','/api/jobs',photoForm(),a.cookie,a.csrf);
+ const job=env.sqlite.prepare('SELECT * FROM jobs').get();assert.equal(job.status,'failed');assert.match(job.error,/InvalidApiKey/);assert.ok(!job.error.includes(env.DASHSCOPE_API_KEY));
+ assert.equal(env.sqlite.prepare('SELECT credits FROM users').get().credits,6);
+});
+test('daily budget includes queued SQL timestamps and concurrent reservations',async t=>{
+ const env=wanEnv(),a=await auth(env);await moveCredits(env,a.user.id,30,'test','wan-fund');
+ env.MAX_DAILY_VIDEO_BUDGET_USD='0.50';
+ t.mock.method(globalThis,'fetch',async()=>json({output:{task_id:'budget-1',task_status:'PENDING'}}));
+ // A legacy queued job uses SQLite's space-separated timestamp, not ISO format.
+ env.sqlite.prepare("INSERT INTO jobs(id,user_id,template_id,status,cost_credits,estimated_cost_usd,provider) VALUES('old-queued',1,1,'queued',6,0.50,'fal')").run();
+ assert.equal((await call(env,'POST','/api/jobs',photoForm(),a.cookie,a.csrf)).status,429);
+ assert.equal(env.sqlite.prepare('SELECT credits FROM users').get().credits,30);
+ env.sqlite.prepare("DELETE FROM jobs WHERE id='old-queued'").run();
+ const results=await Promise.all([call(env,'POST','/api/jobs',photoForm(),a.cookie,a.csrf),call(env,'POST','/api/jobs',photoForm(),a.cookie,a.csrf)]);
+ assert.deepEqual(results.map(r=>r.status).sort(),[201,429]);assert.equal(env.sqlite.prepare('SELECT COUNT(*) AS n FROM jobs').get().n,1);
+ assert.equal(env.sqlite.prepare('SELECT credits FROM users').get().credits,24);
+});
+test('video downloads reject foreign, credential-bearing and non-HTTPS URLs',()=>{
+ assert.equal(trustedVideoUrl(videoUrl,'dashscope'),true);
+ for(const url of ['https://evil.example/video.mp4','https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com.evil.example/v','https://user:secret@dashscope-result-bj.oss-cn-beijing.aliyuncs.com/v','http://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/v'])assert.equal(trustedVideoUrl(url,'dashscope'),false);
+});
+

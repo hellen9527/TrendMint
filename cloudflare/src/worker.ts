@@ -2,6 +2,7 @@ import {Env,Ctx,ApiError,one,all,run,j,fail,now,getUser,issueSession,withCookies
 import {PACKS,billingReady,checkout,billingPortal,wallet,verifyStripe,handleStripeEvent} from './billing';
 import {listTrends,addTrend,updateTrend,collectYoutube,promoteDiscovery,reportMarkdown} from './trends';
 import {createJob,jobOut,pollJobs,cleanup,downloadJob} from './jobs';
+import {videoReady} from './providers';
 const JSON_HEADERS={'Cache-Control':'no-store'};
 function match(path:string,pattern:RegExp){return pattern.exec(path)}
 function tid(x:string){return checkedNum(x,'ID',1,100000000)}
@@ -17,7 +18,7 @@ function validateTemplate(b:any){
 async function handleApi(req:Request,env:Env,ctx:Ctx,url:URL):Promise<Response>{
  const path=url.pathname,method=req.method;
  if(method==='GET'&&path==='/api/health')return j({status:'ok',mode:'live',env:'cloudflare',youtube_configured:!!env.YOUTUBE_API_KEY,
-  payments_configured:Boolean(billingReady(env)),real_video_configured:env.VIDEO_PROVIDER==='fal'&&!!env.FAL_KEY},200,JSON_HEADERS);
+  payments_configured:Boolean(billingReady(env)),real_video_configured:videoReady(env)},200,JSON_HEADERS);
  if(method==='GET'&&path==='/api/public/templates')return j((await all(env,'SELECT * FROM templates WHERE active=1 ORDER BY id')).map(publicTemplate));
  if(method==='GET'&&path.startsWith('/api/public/templates/')){
   const t=await one(env,'SELECT * FROM templates WHERE slug=? AND active=1',decodeURIComponent(path.split('/').at(-1)||''));
@@ -117,7 +118,7 @@ async function handleApi(req:Request,env:Env,ctx:Ctx,url:URL):Promise<Response>{
     one(env,"SELECT COUNT(*) AS n FROM jobs WHERE status='completed'"),
     one(env,"SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued','processing')"),
     one(env,'SELECT COALESCE(SUM(cents),0) AS n FROM revenue_events'),
-    one(env,"SELECT COALESCE(SUM(estimated_cost_usd),0) AS n FROM jobs WHERE provider='fal' AND status<>'queued'"),
+    one(env,"SELECT COALESCE(SUM(estimated_cost_usd),0) AS n FROM jobs WHERE provider IN ('fal','dashscope') AND status<>'queued'"),
     one(env,"SELECT COUNT(*) AS n FROM metric_events WHERE event='page_view'"),
     one(env,'SELECT COUNT(*) AS n FROM trends'),
     one(env,'SELECT * FROM collection_runs ORDER BY started_at DESC LIMIT 1')]);
@@ -173,3 +174,4 @@ const worker={
  }
 };
 export default worker;
+
