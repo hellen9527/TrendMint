@@ -22,7 +22,8 @@ export async function createJob(req:Request,env:Env,ctx:Ctx,user:any){
  if(f.size>MAX||f.size<25)fail(413,'图片大小必须在 25B 至 4MB 之间');
  const buffer=await f.arrayBuffer(),type=imageType(new Uint8Array(buffer));
  if((await one(env,"SELECT COUNT(*) AS n FROM jobs WHERE user_id=? AND datetime(created_at)>=datetime(?)",user.id,new Date(Date.now()-86400000).toISOString()))?.n>=25)fail(429,'今日任务已达到限额');
- const cost=Number(env.VIDEO_COST_ESTIMATE_USD||0.5),limit=Number(env.MAX_DAILY_VIDEO_BUDGET_USD||5);
+ const defaultCost=provider==='dashscope'?(env.DASHSCOPE_REGION==='ap-southeast-1'?(env.WAN_AUDIO==='true'?0.28:0.14):(env.WAN_AUDIO==='true'?0.24:0.12)):0.5;
+ const cost=Number(env.VIDEO_COST_ESTIMATE_USD||defaultCost),limit=Number(env.MAX_DAILY_VIDEO_BUDGET_USD||5);
  if(!Number.isFinite(cost)||!Number.isFinite(limit)||!(cost>0&&limit>0))fail(503,'模型预算未正确配置');
  const jid=id(),key=`inputs/${jid}`;
  await env.MEDIA.put(key,buffer,{httpMetadata:{contentType:type}});

@@ -9,7 +9,7 @@ const {moveCredits,stripeHmac}=require('../.test-build/core.js');
 const {verifyStripe,handleStripeEvent}=require('../.test-build/billing.js');
 const {trendScore}=require('../.test-build/trends.js');
 const {pollJobs}=require('../.test-build/jobs.js');
-const {trustedVideoUrl}=require('../.test-build/providers.js');
+const {trustedVideoUrl,submitVideo}=require('../.test-build/providers.js');
 function makeEnv(){
  const sqlite=new DatabaseSync(':memory:');sqlite.exec(readFileSync(new URL('../migrations/0001_init.sql',import.meta.url),'utf8'));
  const media=new Map();
@@ -103,7 +103,7 @@ test('SEO response serves canonical and noindex on internal dashboard',async()=>
  const t=await call(env,'GET','/t/pet-popstar');assert.equal(t.status,200);assert.ok((await t.text()).includes('AI Pet Popstar'));
 });
 
-function wanEnv(){return Object.assign(makeEnv(),{VIDEO_PROVIDER:'dashscope',DASHSCOPE_API_KEY:'unit-test-only-key',DASHSCOPE_WORKSPACE_ID:'llm-test-space',DASHSCOPE_REGION:'cn-beijing',VIDEO_COST_ESTIMATE_USD:'0.50',MAX_DAILY_VIDEO_BUDGET_USD:'5'});}
+function wanEnv(){return Object.assign(makeEnv(),{VIDEO_PROVIDER:'dashscope',DASHSCOPE_API_KEY:'unit-test-only-key',DASHSCOPE_WORKSPACE_ID:'llm-test-space',DASHSCOPE_REGION:'cn-beijing',VIDEO_COST_ESTIMATE_USD:'0.12',MAX_DAILY_VIDEO_BUDGET_USD:'5'});}
 function photoForm(){
  const bytes=new Uint8Array(32).fill(255);bytes.set([255,216,255]);
  const fd=new FormData();fd.set('template_id','1');fd.set('agree_rights','true');fd.set('image',new File([bytes],'photo.jpg',{type:'image/jpeg'}));return fd;
@@ -117,16 +117,17 @@ test('Wan submits once, polls asynchronously, stores privately and checks downlo
  t.mock.method(globalThis,'fetch',async(url,opts)=>{
   if(url===wanBase+'/services/aigc/video-generation/video-synthesis'){
    submits++;assert.equal(opts.headers.Authorization,'Bearer unit-test-only-key');assert.equal(opts.headers['X-DashScope-Async'],'enable');assert.equal(opts.redirect,'error');
-   const body=JSON.parse(opts.body);assert.equal(body.model,'wan3.0-video');assert.deepEqual(body.parameters,{resolution:'720P',ratio:'adaptive',duration:5,audio:true,prompt_extend:true});
-   assert.equal(body.input.media[0].type,'first_frame');
-   const encoded=body.input.media[0].url.split(',')[1];assert.match(encoded,/^[a-zA-Z0-9+/]+=*$/);assert.ok(encoded.endsWith('='));assert.equal(Buffer.from(encoded,'base64').length,32);
+   const body=JSON.parse(opts.body);assert.equal(body.model,'wan2.6-i2v-flash');assert.deepEqual(body.parameters,{resolution:'720P',duration:5,audio:false,prompt_extend:true,shot_type:'single'});
+   assert.equal(body.input.media,undefined);assert.equal(body.parameters.ratio,undefined);
+   const encoded=body.input.img_url.split(',')[1];assert.match(encoded,/^[a-zA-Z0-9+/]+=*$/);assert.ok(encoded.endsWith('='));assert.equal(Buffer.from(encoded,'base64').length,32);
    return json({output:{task_id:'wan-task-1',task_status:'PENDING'}});
   }
   if(url===wanBase+'/tasks/wan-task-1')return json({output:{task_id:'wan-task-1',task_status:status,video_url:status==='SUCCEEDED'?videoUrl:undefined}});
   if(url===videoUrl){assert.equal(opts.headers,undefined);return new Response(new Uint8Array(2048));}
   throw Error('Unexpected request '+url);
  });
- assert.equal((await (await call(env,'GET','/api/health')).json()).real_video_configured,true);
+ const health=await (await call(env,'GET','/api/health')).json();
+ assert.equal(health.real_video_configured,true);assert.deepEqual(health.video_config,{model:'wan2.6-i2v-flash',resolution:'720P',duration_seconds:5,audio:false});
  const r=await call(env,'POST','/api/jobs',photoForm(),a.cookie,a.csrf);assert.equal(r.status,201);
  const job=await r.json();assert.equal(job.provider,'dashscope');assert.equal(submits,1);
  await pollJobs(env);assert.equal(env.sqlite.prepare('SELECT status FROM jobs').get().status,'processing');
@@ -172,6 +173,7 @@ test('Wan rejected submission is sanitized and refunded',async t=>{
 });
 test('daily budget includes queued SQL timestamps and concurrent reservations',async t=>{
  const env=wanEnv(),a=await auth(env);await moveCredits(env,a.user.id,30,'test','wan-fund');
+ env.VIDEO_COST_ESTIMATE_USD='0.50';
  env.MAX_DAILY_VIDEO_BUDGET_USD='0.50';
  t.mock.method(globalThis,'fetch',async()=>json({output:{task_id:'budget-1',task_status:'PENDING'}}));
  // A legacy queued job uses SQLite's space-separated timestamp, not ISO format.
@@ -186,5 +188,14 @@ test('daily budget includes queued SQL timestamps and concurrent reservations',a
 test('video downloads reject foreign, credential-bearing and non-HTTPS URLs',()=>{
  assert.equal(trustedVideoUrl(videoUrl,'dashscope'),true);
  for(const url of ['https://evil.example/video.mp4','https://dashscope-result-bj.oss-cn-beijing.aliyuncs.com.evil.example/v','https://user:secret@dashscope-result-bj.oss-cn-beijing.aliyuncs.com/v','http://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/v'])assert.equal(trustedVideoUrl(url,'dashscope'),false);
+});
+test('Flash audio can only be enabled explicitly in server configuration',async t=>{
+ const env=wanEnv();env.WAN_AUDIO='true';
+ t.mock.method(globalThis,'fetch',async(url,opts)=>{
+  const body=JSON.parse(opts.body);assert.equal(body.model,'wan2.6-i2v-flash');assert.equal(body.parameters.audio,true);
+  return json({output:{task_id:'audio-task-1',task_status:'PENDING'}});
+ });
+ await submitVideo(env,'dashscope','data:image/jpeg;base64,/9j/','A pet smiles');
+ env.WAN_AUDIO='invalid';await assert.rejects(()=>submitVideo(env,'dashscope','image','prompt'),/配置不完整/);
 });
 

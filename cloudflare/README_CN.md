@@ -57,11 +57,11 @@ UPDATE users SET is_admin = 1 WHERE email = '你的邮箱@example.com';
 
 重新登录后可打开 `/trends`、`/dashboard`。公网注册用户默认**不**拥有管理员权限。
 
-## 4. 配置百炼 Wan 3.0 视频（初期推荐流程）
+## 4. 配置百炼 Wan 2.6 Flash 视频（初期推荐流程）
 
-模型为 `wan3.0-video`，固定生成 **720P / 5 秒 / 单张首帧图片 / 带音频**。模型提交和查询均在 Worker 服务端执行，Key 不进入浏览器、HTML、R2 或 Git 仓库。
+主模型为 `wan2.6-i2v-flash`，固定生成 **720P / 5 秒 / 单张首帧图片**，默认**无声**，降低初期成本。模型提交和查询均在 Worker 服务端执行，Key 不进入浏览器、HTML、R2 或 Git 仓库。上传图片通过此模型要求的 `input.img_url` 传入，不能使用 Wan 3.0 的 `input.media` 请求格式。
 
-1. 打开 [百炼 API Key 页面](https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key)，选择 **华北2（北京）**。同地域、同业务空间且允许调用该模型的已有 Key 可以复用；也可创建限制到 `wan3.0-video` 的应用专用 Key。
+1. 打开 [百炼 API Key 页面](https://bailian.console.aliyun.com/cn-beijing/model/settings/api-key)，选择 **华北2（北京）**。同地域、同业务空间且允许调用该模型的已有 Key 可以复用；若之前 Key 的模型白名单只有 Wan 3.0，请将 `wan2.6-i2v-flash` 加入可调用模型范围。
 2. 在百炼同一业务空间中复制 **业务空间 ID（Workspace ID）**：点击右上角业务空间信息，或在「业务空间管理」中查看。它不是 App ID，也不是阿里云账号 ID。获取方法见[官方说明](https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id)。
 3. 在 [GitHub Secrets](https://github.com/hellen9527/TrendMint/settings/secrets/actions) 新建 Repository secret：
 
@@ -74,19 +74,28 @@ UPDATE users SET is_admin = 1 WHERE email = '你的邮箱@example.com';
 | Name | Value |
 |---|---|
 | `DASHSCOPE_WORKSPACE_ID` | 与 Key 对应的业务空间 ID，必填 |
-| `DASHSCOPE_REGION` | 默认 `cn-beijing`，北京用户无需添加 |
-| `VIDEO_COST_ESTIMATE_USD` | 默认 `0.50`，每条视频保守预算估算，需按实际单价/汇率更新 |
+| `DASHSCOPE_REGION` | 默认 `cn-beijing`，北京用户无需添加；Flash 也支持 `ap-southeast-1`，需使用该地域 Key/业务空间 |
+| `WAN_AUDIO` | 默认 `false`（无声）；设为 `true` 生成有声视频，模型费用翻倍 |
+| `VIDEO_COST_ESTIMATE_USD` | 北京默认无声 `0.12`、有声 `0.24`；新加坡默认无声 `0.14`、有声 `0.28`。每条 5 秒视频保守预算估算，覆盖此变量时需按地域/单价/汇率更新 |
 | `MAX_DAILY_VIDEO_BUDGET_USD` | 默认 `5`，每天 UTC 零点重置的预计费用上限 |
 
 5. 在 GitHub Actions → **Cloudflare Deploy → Run workflow** 重新部署。三个 Cloudflare 部署 Secrets 仍需按第 2 节配置。工作流检测到百炼 Key 后启用 `VIDEO_PROVIDER=dashscope`，校验业务空间/地域，并通过标准输入将 Key 写入 `trendmint` Worker 的 **Secret**。未添加 Key 时继续部署网页，但关闭生成。以后修改 Key 或 Variables 后需重新运行工作流；生产配置以 GitHub Actions 为准，手工改 Dashboard 的普通 Variables 会在下一次部署时被覆盖。
 
-Wan 3.0 使用业务空间专用 endpoint：`https://{WorkspaceId}.{Region}.maas.aliyuncs.com/api/v1`，不是 Qwen 文本聊天的 OpenAI 兼容 endpoint。Key、业务空间和 endpoint 必须属于同一地域。已充值的百炼账户仍需确认模型调用权限和余额；聊天会员与 API 余额是不同产品。
+视频接口使用业务空间专用 endpoint：`https://{WorkspaceId}.{Region}.maas.aliyuncs.com/api/v1`，不是 Qwen 文本聊天的 OpenAI 兼容 endpoint。Key、业务空间和 endpoint 必须属于同一地域。已充值的百炼账户仍需确认模型调用权限和余额；聊天会员与 API 余额是不同产品。
+
+### 成本与试用策略
+
+百炼北京当前公示原价：720P 无声 0.15 元/秒，有声 0.30 元/秒，因此 **5 秒无声 0.75 元，有声 1.50 元**（不包含活动折扣、存储、带宽等费用）。Flash 最低支持 720P，不能用 `480P` 请求；生成 720P 后压缩到 480P 也不会减少模型账单。[官方模型价格](https://help.aliyun.com/zh/model-studio/wan2-6-i2v-flash)。
+
+当前**注册仍为 0 积分，不开放每日免费生成**。用户不足积分时返回 402，不会发起付费模型请求。免费真实生成属于获客支出：每人赠送一次 5 秒无声视频，1000 人试用约花 750 元；若 5% 付费，单个付费客户承担的试用成本为 15 元，需用其后续毛利覆盖。初期可先展示样例、确认付费需求；若以后启用新人试用，可考虑一次 2 秒无声预览（模型约 0.30 元）、账号验证及全站总预算。该 2 秒试用方案尚未启用，当前所有生成仍为 5 秒。
+
+朋友网站 [Hotel Lobby AI](https://hotellobbyai.co/) 的当前公开规则为：免费账户每天 1 条 480p、6 秒、无声 Fast Preview，高规格使用积分。生成页明确说明免费预览用轻量模型、付费生成用更好的模型；没有公开具体供应商和模型费用，不能据此确定其每次免费试用的成本。
 
 任务提交后只查询同一个 task ID，不反复创建。Cron 每 5 分钟轮询，所以生成完成在网站上显示可能额外等待几分钟。成功结果立即私有存到 R2，下载校验登录及任务归属，保存 7 天；失败返还站内积分。预算计入排队任务与失败任务（保守计费），防止并发超额。预算是应用估算，不能代替百炼账单或账户级限额。
 
 验证：`/api/health` 的 `real_video_configured=true` 表示本地配置完整，**不代表已验证 Key 权限**。首次真实验证需要在网站注册测试账号，由管理员在独立 D1 中给予少量测试积分，再上传有权使用的照片生成。注册不赠送积分、Stripe 未启用时不会出现虚拟充值。
 
-已覆盖模拟 API 的提交、状态轮询、R2 保存、私有下载、权限校验和失败退款；真实付费生成仍需配置 Key 后联调。[Wan 3.0 API 官方文档](https://help.aliyun.com/zh/model-studio/wan3-video-generation-api-reference)。
+已覆盖模拟 API 的提交、状态轮询、R2 保存、私有下载、权限校验和失败退款；真实付费生成仍需配置 Key 后联调。[Wan 2.1–2.6 首帧图生视频 API 官方文档](https://help.aliyun.com/zh/model-studio/legacy-image-to-video-api-reference/)。
 
 原有 fal 提供商仍可在本地或手工部署中设置 `VIDEO_PROVIDER=fal` 与服务端 `FAL_KEY` 使用；当前 GitHub 自动部署按百炼配置执行。
 

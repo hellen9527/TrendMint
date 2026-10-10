@@ -5,10 +5,16 @@ test('Wan configuration never serializes secrets and only binds the isolated sub
  const cfg=buildConfig({VIDEO_PROVIDER:'dashscope',DASHSCOPE_WORKSPACE_ID:'llm-test-space',DASHSCOPE_API_KEY:'unit-test-key',TRENDMINT_CUSTOM_DOMAIN:'true'});
  assert.equal(cfg.vars.VIDEO_PROVIDER,'dashscope');assert.equal(cfg.vars.DASHSCOPE_REGION,'cn-beijing');
  assert.equal(cfg.vars.MAX_DAILY_VIDEO_BUDGET_USD,'5');
+ assert.equal(cfg.vars.WAN_AUDIO,'false');assert.equal(cfg.vars.VIDEO_COST_ESTIMATE_USD,'0.12');
+ const sound=buildConfig({WAN_AUDIO:'true'});assert.equal(sound.vars.VIDEO_COST_ESTIMATE_USD,'0.24');
+ assert.equal(buildConfig({DASHSCOPE_REGION:'ap-southeast-1'}).vars.VIDEO_COST_ESTIMATE_USD,'0.14');
+ assert.equal(buildConfig({DASHSCOPE_REGION:'ap-southeast-1',WAN_AUDIO:'true'}).vars.VIDEO_COST_ESTIMATE_USD,'0.28');
+ assert.throws(()=>buildConfig({WAN_AUDIO:'yes'}),/WAN_AUDIO/);
  assert.ok(!JSON.stringify(cfg).includes('unit-test-key'));assert.deepEqual(cfg.routes,[{pattern:'trendmint.fategenie.com',custom_domain:true}]);
  assert.equal(buildConfig({}).vars.VIDEO_PROVIDER,'disabled');
  assert.throws(()=>buildConfig({VIDEO_PROVIDER:'dashscope'}),/WORKSPACE/);
  assert.throws(()=>buildConfig({VIDEO_PROVIDER:'dashscope',DASHSCOPE_WORKSPACE_ID:'evil.test/path'}),/WORKSPACE/);
+ assert.throws(()=>buildConfig({VIDEO_PROVIDER:'dashscope',DASHSCOPE_WORKSPACE_ID:'llm-test-space',DASHSCOPE_REGION:'ap-northeast-1'}),/REGION/);
  assert.throws(()=>buildConfig({VIDEO_COST_ESTIMATE_USD:'Infinity'}),/budget/);
 });
 test('worker entry and routes are present',()=>{

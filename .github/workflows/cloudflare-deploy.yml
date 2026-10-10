@@ -18,7 +18,8 @@ jobs:
     env:
       DASHSCOPE_WORKSPACE_ID: ${{ vars.DASHSCOPE_WORKSPACE_ID }}
       DASHSCOPE_REGION: ${{ vars.DASHSCOPE_REGION || 'cn-beijing' }}
-      VIDEO_COST_ESTIMATE_USD: ${{ vars.VIDEO_COST_ESTIMATE_USD || '0.50' }}
+      WAN_AUDIO: ${{ vars.WAN_AUDIO || 'false' }}
+      VIDEO_COST_ESTIMATE_USD: ${{ vars.VIDEO_COST_ESTIMATE_USD }}
       MAX_DAILY_VIDEO_BUDGET_USD: ${{ vars.MAX_DAILY_VIDEO_BUDGET_USD || '5' }}
     steps:
       - uses: actions/checkout@v4

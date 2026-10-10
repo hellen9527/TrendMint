@@ -1,8 +1,8 @@
 import {Env} from './core';
 
-// Initial Wan flow is deliberately fixed: one 5-second, 720P first-frame video.
-export const WAN_MODEL='wan3.0-video';
-const REGIONS=new Set(['cn-beijing','ap-southeast-1','ap-northeast-1','eu-central-1','us-east-1','cn-hongkong']);
+// Initial Wan flow: one 5-second, 720P first-frame video; silent by default.
+export const WAN_MODEL='wan2.6-i2v-flash';
+const REGIONS=new Set(['cn-beijing','ap-southeast-1']); // Flash is offered in these regions.
 const TASK_ID=/^[a-z0-9-]{1,128}$/i;
 export class ProviderFailure extends Error {}
 function workspaceBase(env:Env){
@@ -15,10 +15,15 @@ function falModel(env:Env){
  if(!/^[a-z0-9-]+\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/i.test(model))throw Error('模型标识无效');
  return model;
 }
+function wanAudio(env:Env){
+ const value=env.WAN_AUDIO||'false';
+ if(!['true','false'].includes(value))throw Error('WAN_AUDIO 必须为 true 或 false');
+ return value==='true';
+}
 export function videoReady(env:Env,provider=env.VIDEO_PROVIDER){
  if(!env.MEDIA)return false;
  try{
-  if(provider==='dashscope'){workspaceBase(env);return Boolean(env.DASHSCOPE_API_KEY);}
+  if(provider==='dashscope'){workspaceBase(env);wanAudio(env);return Boolean(env.DASHSCOPE_API_KEY);}
   if(provider==='fal'){falModel(env);return Boolean(env.FAL_KEY);}
  }catch{return false;}
  return false;
@@ -42,11 +47,12 @@ const options={redirect:'error' as const}; // Never forward provider credentials
 export async function submitVideo(env:Env,provider:string,image:string,prompt:string){
  if(!videoReady(env,provider))throw new ProviderFailure('视频提供商配置不完整');
  if(provider==='dashscope'){
+  if(prompt.length>1500)throw new ProviderFailure('万相提示词超过 1500 字符，请缩短模板或附加提示词');
   const base=workspaceBase(env);
   const res=await fetch(`${base}/services/aigc/video-generation/video-synthesis`,{...options,method:'POST',signal:AbortSignal.timeout(25000),
    headers:{...auth(env,provider),'Content-Type':'application/json','X-DashScope-Async':'enable'},
-   body:JSON.stringify({model:WAN_MODEL,input:{prompt,media:[{type:'first_frame',url:image}]},
-    parameters:{resolution:'720P',ratio:'adaptive',duration:5,audio:true,prompt_extend:true}})});
+   body:JSON.stringify({model:WAN_MODEL,input:{prompt,img_url:image},
+    parameters:{resolution:'720P',duration:5,audio:wanAudio(env),prompt_extend:true,shot_type:'single'}})});
   const data:any=await res.json().catch(()=>({}));
   if(!res.ok||data.code)throw new ProviderFailure(`百炼提交失败 HTTP ${res.status}${errorCode(data)}`);
   const task=data?.output?.task_id;
